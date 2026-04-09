@@ -1,0 +1,5 @@
+streamlit
+pandas
+requests
+python-jose[cryptography]
+python-dotenv
