@@ -1,0 +1,153 @@
+name: kafka
+
+services:
+  broker:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: broker
+    hostname: broker
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+      - "9404:9404"
+    volumes:
+      - ./jmx-exporter:/opt/jmx
+      - broker-data:/var/lib/kafka/data
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@broker:9093"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://broker:29092,EXTERNAL://${KAFKA_EXTERNAL_HOST}:9092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      KAFKA_METADATA_LOG_DIR: "/var/lib/kafka/data"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_OPTS: >-
+        -javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=0.0.0.0:9404:/opt/jmx/kafka-jmx.yml
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc '</dev/tcp/127.0.0.1/29092'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.1
+    container_name: schema-registry
+    hostname: schema-registry
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "8181:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: "schema-registry"
+      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "PLAINTEXT://broker:29092"
+
+  kafka-rest:
+    image: confluentinc/cp-kafka-rest:7.6.1
+    container_name: kafka-rest
+    hostname: kafka-rest
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+    ports:
+      - "8082:8082"
+    environment:
+      KAFKA_REST_HOST_NAME: "kafka-rest"
+      KAFKA_REST_LISTENERS: "http://0.0.0.0:8082"
+      KAFKA_REST_BOOTSTRAP_SERVERS: "PLAINTEXT://broker:29092"
+      KAFKA_REST_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.6.1
+    container_name: control-center
+    hostname: control-center
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+      kafka-rest:
+        condition: service_started
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: "broker:29092"
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+      CONTROL_CENTER_KAFKA_REST_URL: "http://kafka-rest:8082"
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_REPLICATION: 1
+      CONTROL_CENTER_COMMAND_TOPIC_REPLICATION: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_REPLICATION: 1
+      PORT: 9021
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: kafka-exporter
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+    ports:
+      - "9308:9308"
+    command:
+      - "--kafka.server=broker:29092"
+
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.6.1
+    container_name: kafka-connect
+    hostname: kafka-connect
+    restart: unless-stopped
+    depends_on:
+      broker:
+        condition: service_healthy
+      schema-registry:
+        condition: service_started
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./connect-plugins:/usr/share/confluent-hub-components
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: "broker:29092"
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: "kafka-connect"
+      CONNECT_GROUP_ID: "connect-cluster"
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+    command:
+      - bash
+      - -c
+      - |
+        if [ ! -d /usr/share/confluent-hub-components/confluentinc-kafka-connect-s3 ]; then
+          confluent-hub install --no-prompt confluentinc/kafka-connect-s3:10.5.0
+        fi
+        /etc/confluent/docker/run
+
+volumes:
+  broker-data:
+    name: kafka-broker-data

@@ -1,0 +1,132 @@
+name: spark
+
+services:
+  spark-master:
+    image: apache/spark:3.5.1
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      SPARK_MASTER_OPTS: "-Dspark.master.rest.enabled=true -Dspark.master.rest.port=6066"
+    command:
+      - bash
+      - -lc
+      - |
+        /opt/spark/sbin/start-master.sh --host spark-master --port 7077 --webui-port 8080
+        tail -f /dev/null
+    ports:
+      - "7077:7077"
+      - "6066:6066"
+      - "8080:8080"
+    volumes:
+      - ./jars:/opt/spark/jars-extra
+      - ./ivy2:/tmp/.ivy2
+      - ./work-dir:/opt/spark/work-dir
+      - ./jobs:/opt/spark/jobs
+    networks:
+      - sparknet
+    healthcheck:
+      test: ["CMD-SHELL", "ps -ef | grep -q '[o]rg.apache.spark.deploy.master.Master'"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  spark-worker:
+    image: apache/spark:3.5.1
+    container_name: spark-worker
+    hostname: spark-worker
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command:
+      - bash
+      - -lc
+      - |
+        /opt/spark/sbin/start-worker.sh spark://spark-master:7077 --webui-port 8081 --cores ${SPARK_WORKER_CORES:-12} --memory ${SPARK_WORKER_MEMORY:-3G}
+        tail -f /dev/null
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./jars:/opt/spark/jars-extra
+      - ./ivy2:/tmp/.ivy2
+      - ./work-dir:/opt/spark/work-dir
+    networks:
+      - sparknet
+
+  spark-connect:
+    image: apache/spark:3.5.1
+    container_name: spark-connect
+    hostname: spark-connect
+    user: "0:0"
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      HOME: /tmp
+      HADOOP_USER_NAME: spark
+      SPARK_USER: spark
+      AWS_ACCESS_KEY_ID: "dataplatform"
+      AWS_SECRET_ACCESS_KEY: "Dataplatform@123"
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      spark-worker:
+        condition: service_started
+    command:
+      - bash
+      - -lc
+      - |
+        set -euo pipefail
+
+        mkdir -p /opt/spark/work-dir/artifacts /opt/spark/work-dir/spark-warehouse /tmp/.ivy2
+        chmod -R 777 /opt/spark/work-dir /tmp/.ivy2 || true
+
+        echo "waiting spark-master:7077..."
+        for i in $$(seq 1 60); do
+          (echo > /dev/tcp/spark-master/7077) >/dev/null 2>&1 && break
+          sleep 1
+        done
+
+        EXTRA_JARS=$$(ls -1 /opt/spark/jars-extra/*.jar 2>/dev/null | paste -sd, - || true)
+        PACKAGES="org.apache.spark:spark-connect_2.12:3.5.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-token-provider-kafka-0-10_2.12:3.5.1,org.apache.kafka:kafka-clients:3.4.1"
+        JAR_ARGS=()
+        if [ -n "$${EXTRA_JARS}" ]; then
+          JAR_ARGS=(--jars "$${EXTRA_JARS}")
+        fi
+
+        exec /opt/spark/sbin/start-connect-server.sh \
+          --master spark://spark-master:7077 \
+          --packages "$$PACKAGES" \
+          "$${JAR_ARGS[@]}" \
+          --conf spark.jars.ivy=/tmp/.ivy2 \
+          --conf spark.ui.port=4040 \
+          --conf spark.connect.grpc.binding.port=15002 \
+          --conf spark.connect.grpc.binding.address=0.0.0.0 \
+          --conf spark.sql.warehouse.dir=/opt/spark/work-dir/spark-warehouse \
+          --conf spark.connect.artifact.root=/opt/spark/work-dir/artifacts \
+          --conf spark.executor.cores=2 \
+          --conf spark.executor.memory=512m \
+          --conf spark.cores.max=4 \
+          --conf spark.driver.memory=1g \
+          --conf spark.driver.maxResultSize=1g \
+          --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+          --conf spark.hadoop.fs.s3a.endpoint=http://10.155.38.155:9000 \
+          --conf spark.hadoop.fs.s3a.path.style.access=true \
+          --conf spark.hadoop.fs.s3a.fast.upload=true \
+          --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
+          --conf spark.hadoop.fs.s3a.access.key=dataplatform \
+          --conf spark.hadoop.fs.s3a.secret.key=Dataplatform@123 \
+          --conf spark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+    ports:
+      - "15002:15002"
+      - "4040:4040"
+    volumes:
+      - ./jars:/opt/spark/jars-extra
+      - ./ivy2:/tmp/.ivy2
+      - ./work-dir:/opt/spark/work-dir
+    networks:
+      - sparknet
+
+networks:
+  sparknet:
+    name: sparknet

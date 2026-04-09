@@ -1,0 +1,16 @@
+name: trino
+
+services:
+  trino:
+    image: trinodb/trino:479
+    container_name: trino
+    hostname: trino
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./etc/config.properties:/etc/trino/config.properties:ro
+      - ./etc/node.properties:/etc/trino/node.properties:ro
+      - ./etc/catalog:/etc/trino/catalog:ro
+      - ./data:/var/trino/data
+

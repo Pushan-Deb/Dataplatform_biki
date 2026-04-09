@@ -1,0 +1,26 @@
+# Backup
+server3/%BACKUP%/
+
+# Kafka
+server3/kafka/data/
+server3/kafka/broker-data/
+server3/kafka/broker-data-backup-*/
+
+# Spark
+server3/spark/ivy2/
+server3/spark/work-dir/
+server3/spark/jars/
+server3/spark/root-migrated-backup/
+
+# Ollama
+server3/ollama/data/
+
+# Trino
+server3/trino/data/
+
+# General
+*.log
+*.tmp
+*.pid
+*.env
+id_ed25519
