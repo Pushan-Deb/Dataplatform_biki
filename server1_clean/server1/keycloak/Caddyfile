@@ -1,4 +1,4 @@
-https://10.155.38.139:8443 {
+:8443 {
     tls internal
     reverse_proxy keycloak:8080
 }
