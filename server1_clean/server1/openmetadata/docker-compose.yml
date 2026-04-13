@@ -1,0 +1,125 @@
+services:
+  postgres:
+    container_name: openmetadata_postgres
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OM_DATABASE}
+    volumes:
+      - openmetadata_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${OM_DATABASE}
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  elasticsearch:
+    container_name: openmetadata_elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTICSEARCH_VERSION}
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS}
+      xpack.security.enabled: "false"
+      xpack.ml.enabled: "false"
+    volumes:
+      - openmetadata_es_data_v8:/usr/share/elasticsearch/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -s http://localhost:9200/_cluster/health | grep -qE "\"status\":\"(green|yellow)\"" || exit 1
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  execute-migrate-all:
+    container_name: execute_migrate_all
+    image: docker.getcollate.io/openmetadata/server:${OPENMETADATA_VERSION}
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    environment: &openmetadata-env
+      OPENMETADATA_CLUSTER_NAME: ${OPENMETADATA_CLUSTER_NAME}
+      SERVER_PORT: ${OPENMETADATA_PORT}
+      SERVER_ADMIN_PORT: ${OPENMETADATA_ADMIN_PORT}
+      LOG_LEVEL: ${LOG_LEVEL}
+      MIGRATION_LIMIT_PARAM: "1200"
+      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+      AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
+      AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS}
+      AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN: ${AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN}
+      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS}
+      AUTHENTICATION_PROVIDER: ${AUTHENTICATION_PROVIDER}
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: ${AUTHENTICATION_ENABLE_SELF_SIGNUP}
+      AUTHENTICATION_PUBLIC_KEYS: "[http://localhost:${OPENMETADATA_PORT}/api/v1/system/config/jwks]"
+      RSA_PUBLIC_KEY_FILE_PATH: ./conf/public_key.der
+      RSA_PRIVATE_KEY_FILE_PATH: ./conf/private_key.der
+      JWT_ISSUER: ${JWT_ISSUER}
+      JWT_KEY_ID: ${JWT_KEY_ID}
+      PIPELINE_SERVICE_CLIENT_ENABLED: ${PIPELINE_SERVICE_CLIENT_ENABLED}
+      PIPELINE_SERVICE_CLIENT_CLASS_NAME: org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient
+      PIPELINE_SERVICE_CLIENT_ENDPOINT: ${PIPELINE_SERVICE_CLIENT_ENDPOINT}
+      PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL: "300"
+      SERVER_HOST_API_URL: ${SERVER_HOST_API_URL}
+      PIPELINE_SERVICE_CLIENT_VERIFY_SSL: no-ssl
+      DB_DRIVER_CLASS: org.postgresql.Driver
+      DB_SCHEME: postgresql
+      DB_PARAMS: ${DB_PARAMS}
+      DB_USE_SSL: "false"
+      DB_USER: ${DB_USER}
+      DB_USER_PASSWORD: ${DB_USER_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      OM_DATABASE: ${OM_DATABASE}
+      ELASTICSEARCH_HOST: ${ELASTICSEARCH_HOST}
+      ELASTICSEARCH_PORT: ${ELASTICSEARCH_PORT}
+      ELASTICSEARCH_SCHEME: ${ELASTICSEARCH_SCHEME}
+      SEARCH_TYPE: ${SEARCH_TYPE}
+      ELASTICSEARCH_CONNECTION_TIMEOUT_SECS: "5"
+      ELASTICSEARCH_SOCKET_TIMEOUT_SECS: "60"
+      ELASTICSEARCH_KEEP_ALIVE_TIMEOUT_SECS: "600"
+      ELASTICSEARCH_BATCH_SIZE: "100"
+      ELASTICSEARCH_PAYLOAD_BYTES_SIZE: "10485760"
+      ELASTICSEARCH_INDEX_MAPPING_LANG: EN
+      EVENT_MONITOR: prometheus
+      EVENT_MONITOR_BATCH_SIZE: "10"
+      EVENT_MONITOR_PATH_PATTERN: "[\"/api/v1/tables/*\", \"/api/v1/health-check\"]"
+      FERNET_KEY: ${FERNET_KEY}
+      SECRET_MANAGER: db
+      OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS}
+      OPENMETADATA_SERVER_URL: ${OPENMETADATA_SERVER_URL}
+      WEB_CONF_URI_PATH: /api
+
+  openmetadata-server:
+    container_name: openmetadata_server
+    image: docker.getcollate.io/openmetadata/server:${OPENMETADATA_VERSION}
+    restart: unless-stopped
+    depends_on:
+      execute-migrate-all:
+        condition: service_completed_successfully
+    environment:
+      <<: *openmetadata-env
+    ports:
+      - "${OPENMETADATA_BIND_IP}:${OPENMETADATA_PORT}:8585"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://localhost:8586/healthcheck
+      interval: 20s
+      timeout: 10s
+      retries: 15
+
+volumes:
+  openmetadata_postgres_data:
+  openmetadata_es_data_v8:

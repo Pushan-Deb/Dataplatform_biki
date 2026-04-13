@@ -1,0 +1,93 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERPASS}
+      POSTGRES_DB: ${FEAST_REGISTRY_DB}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER} -d ${FEAST_REGISTRY_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  feast-init:
+    image: dataplatform-feast:${FEAST_VERSION}
+    build:
+      context: .
+      args:
+        FEAST_VERSION: ${FEAST_VERSION}
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /opt/feast/repo
+    command: ["sh", "/opt/feast/scripts/bootstrap_repo.sh"]
+    volumes:
+      - ./repo:/opt/feast/repo
+      - ./scripts:/opt/feast/scripts:ro
+
+  feature-server:
+    image: dataplatform-feast:${FEAST_VERSION}
+    build:
+      context: .
+      args:
+        FEAST_VERSION: ${FEAST_VERSION}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      feast-init:
+        condition: service_completed_successfully
+    working_dir: /opt/feast/repo
+    command:
+      - sh
+      - -c
+      - python -m pip install "protobuf>=5,<6" && exec sh /opt/feast/scripts/start_feature_server.sh
+    expose:
+      - "6566"
+    volumes:
+      - ./repo:/opt/feast/repo
+      - ./scripts:/opt/feast/scripts:ro
+
+  registry-server:
+    image: dataplatform-feast:${FEAST_VERSION}
+    build:
+      context: .
+      args:
+        FEAST_VERSION: ${FEAST_VERSION}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      feast-init:
+        condition: service_completed_successfully
+    working_dir: /opt/feast/repo
+    command:
+      - sh
+      - -c
+      - python -m pip install --prefer-binary "protobuf>=5,<6" grpcio grpcio-health-checking grpcio-reflection && exec sh /opt/feast/scripts/start_registry_server.sh
+    expose:
+      - "6572"
+    volumes:
+      - ./repo:/opt/feast/repo
+      - ./scripts:/opt/feast/scripts:ro
+
+  gateway:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    depends_on:
+      feature-server:
+        condition: service_started
+      registry-server:
+        condition: service_started
+    ports:
+      - "${FEAST_BIND_IP}:${FEAST_FEATURE_PORT}:6566"
+      - "${FEAST_BIND_IP}:${FEAST_REGISTRY_REST_PORT}:6572"
+    volumes:
+      - ./nginx/feast.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro

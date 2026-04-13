@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: mlflow-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: mlflow-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./data/minio:/data
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -f
+        - http://localhost:9000/minio/health/live
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: mlflow-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}
+        mc mb --ignore-existing local/${MLFLOW_BUCKET}
+        mc anonymous set none local/${MLFLOW_BUCKET}
+    restart: "no"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: mlflow-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      BACKEND_STORE_URI: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD_URLENCODED}@postgres:5432/${POSTGRES_DB}
+      ARTIFACTS_DESTINATION: s3://${MLFLOW_BUCKET}
+      MLFLOW_ALLOWED_HOSTS: ${MLFLOW_ALLOWED_HOSTS}
+    expose:
+      - "5000"
+    volumes:
+      - ./data/mlruns:/mlflow/mlruns
+    command:
+      - sh
+      - -c
+      - >
+        mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri "$${BACKEND_STORE_URI}"
+        --artifacts-destination "$${ARTIFACTS_DESTINATION}"
+        --serve-artifacts
+        --allowed-hosts "$${MLFLOW_ALLOWED_HOSTS}"
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.29-alpine
+    container_name: mlflow-gateway
+    depends_on:
+      - mlflow
+    ports:
+      - "${MLFLOW_BIND_IP}:${MLFLOW_PORT}:5000"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+    restart: unless-stopped

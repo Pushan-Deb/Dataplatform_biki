@@ -1,0 +1,6 @@
+.env
+logs/
+config/
+__pycache__/
+.pytest_cache/
+.docker-tmp/

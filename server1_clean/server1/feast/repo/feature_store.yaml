@@ -1,0 +1,21 @@
+project: dataplatform
+registry:
+  registry_type: sql
+  path: postgresql+psycopg://dataplatform:Dataplatform%40123@postgres:5432/feast_registry
+  cache_ttl_seconds: 60
+
+provider: local
+
+offline_store:
+  type: file
+
+online_store:
+  type: postgres
+  host: postgres
+  port: 5432
+  database: feature_db
+  user: dataplatform
+  password: Dataplatform@123
+  db_schema: feast_online
+
+entity_key_serialization_version: 3
