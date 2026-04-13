@@ -18,25 +18,78 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 # KEYCLOAK CONFIG (loaded from .env)
 # ==============================
 
-KEYCLOAK_SERVER = os.getenv("KEYCLOAK_SERVER", "http://localhost:8090")
-REALM = os.getenv("KEYCLOAK_REALM", "master")
-CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "data-platform-ui")
-CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
-REDIRECT_URI = os.getenv("KEYCLOAK_REDIRECT_URI", "http://localhost:8501")
+from ui.config import (
+    KEYCLOAK_SERVER, REALM, CLIENT_ID, CLIENT_SECRET,
+    REDIRECT_URI, MICROSOFT_IDP_ALIAS
+)
 
 AUTH_URL = f"{KEYCLOAK_SERVER}/realms/{REALM}/protocol/openid-connect/auth"
 TOKEN_URL = f"{KEYCLOAK_SERVER}/realms/{REALM}/protocol/openid-connect/token"
 LOGOUT_URL = f"{KEYCLOAK_SERVER}/realms/{REALM}/protocol/openid-connect/logout"
 
-def login():
+
+def build_auth_url(idp_hint: str = None) -> str:
     params = {
         "client_id": CLIENT_ID,
         "response_type": "code",
         "scope": "openid profile email",
         "redirect_uri": REDIRECT_URI,
     }
-    url = AUTH_URL + "?" + urllib.parse.urlencode(params)
-    st.markdown(f"[🔐 Login with Keycloak]({url})")
+    if idp_hint:
+        params["kc_idp_hint"] = idp_hint
+    return AUTH_URL + "?" + urllib.parse.urlencode(params)
+
+
+LOGIN_PAGE_CSS = """
+<style>
+.login-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 1rem;
+    gap: 1rem;
+}
+.login-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1.6rem;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none !important;
+    cursor: pointer;
+    width: 280px;
+    justify-content: center;
+}
+.btn-keycloak {
+    background: #4a90d9;
+    color: #fff !important;
+    border: none;
+}
+.btn-keycloak:hover { background: #3a7abf; }
+.btn-microsoft {
+    background: #fff;
+    color: #333 !important;
+    border: 1px solid #ccc;
+}
+.btn-microsoft:hover { background: #f5f5f5; }
+.divider {
+    color: #888;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 280px;
+}
+.divider::before, .divider::after {
+    content: "";
+    flex: 1;
+    border-bottom: 1px solid #ccc;
+}
+</style>
+"""
 
 st.set_page_config(layout="wide", page_title="Data Platform Console")
 
@@ -95,9 +148,28 @@ if "code" in query_params:
             st.stop()
 
 if "token" not in st.session_state:
+    st.markdown(LOGIN_PAGE_CSS, unsafe_allow_html=True)
     st.title("Data Platform Console")
     st.info("Please login to continue")
-    login()
+
+    keycloak_url = build_auth_url()
+    microsoft_url = build_auth_url(idp_hint=MICROSOFT_IDP_ALIAS)
+
+    st.markdown(f"""
+    <div class="login-container">
+        <a href="{keycloak_url}" class="login-btn btn-keycloak">🔐&nbsp; Login with Keycloak</a>
+        <div class="divider">or</div>
+        <a href="{microsoft_url}" class="login-btn btn-microsoft">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 21 21">
+              <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+              <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+              <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+              <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+            </svg>
+            &nbsp;Login with Microsoft
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
 # ==============================

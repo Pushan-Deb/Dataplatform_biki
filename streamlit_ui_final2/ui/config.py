@@ -61,6 +61,9 @@ GRAFANA_MINIO = os.getenv("GRAFANA_MINIO", "http://localhost:3000")
 PLATFORM_USERNAME = os.getenv("PLATFORM_USERNAME", "dataplatform")
 PLATFORM_PASSWORD = os.getenv("PLATFORM_PASSWORD", "")
 
+# Microsoft OIDC IDP (via Keycloak broker)
+MICROSOFT_IDP_ALIAS = os.getenv("MICROSOFT_IDP_ALIAS", "microsoft")
+
 ROLE_TEAMS = {
     "Admin": "Platform",
     "Data Engineer": "DataEng",
