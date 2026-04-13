@@ -61,7 +61,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.8.4-alpine
     container_name: keycloak-caddy
     ports:
       - "${KEYCLOAK_BIND_IP}:${KEYCLOAK_HTTPS_PORT}:8443"
