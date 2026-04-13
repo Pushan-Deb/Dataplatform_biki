@@ -24,7 +24,7 @@ services:
     command:
       - start
       - --http-enabled=true
-      - --hostname=http://10.155.38.139:8090
+      - --hostname=${KEYCLOAK_HOSTNAME}
       - --hostname-strict=false
       - --proxy-headers=xforwarded
     environment:
